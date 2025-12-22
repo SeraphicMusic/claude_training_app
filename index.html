@@ -385,6 +385,17 @@
         .font-bold {
             font-weight: bold;
         }
+        .text-sm {
+            font-size: 0.875rem;
+        }
+        .code-box {
+            background: #f3f4f6;
+            padding: 0.5rem;
+            border-radius: 0.25rem;
+            font-family: monospace;
+            font-size: 0.875rem;
+            word-break: break-all;
+        }
     </style>
 </head>
 <body>
@@ -438,14 +449,6 @@
             </svg>
         );
 
-        const LogOut = ({ size = 24 }) => (
-            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                <polyline points="16 17 21 12 16 7"></polyline>
-                <line x1="21" y1="12" x2="9" y2="12"></line>
-            </svg>
-        );
-
         const Settings = ({ size = 24 }) => (
             <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="3"></circle>
@@ -457,12 +460,10 @@
             const [workoutData, setWorkoutData] = useState(null);
             const [selectedDay, setSelectedDay] = useState(new Date().getDay());
             const [view, setView] = useState('today');
-            const [isSignedIn, setIsSignedIn] = useState(false);
-            const [selectedFileId, setSelectedFileId] = useState(null);
-            const [selectedFileName, setSelectedFileName] = useState('');
             const [showSettings, setShowSettings] = useState(false);
             const [clientId, setClientId] = useState('');
             const [apiKey, setApiKey] = useState('');
+            const [spreadsheetId, setSpreadsheetId] = useState('');
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState('');
 
@@ -480,13 +481,11 @@
             useEffect(() => {
                 const savedClientId = localStorage.getItem('googleClientId');
                 const savedApiKey = localStorage.getItem('googleApiKey');
-                const savedFileId = localStorage.getItem('selectedFileId');
-                const savedFileName = localStorage.getItem('selectedFileName');
+                const savedSpreadsheetId = localStorage.getItem('spreadsheetId');
                 
                 if (savedClientId) setClientId(savedClientId);
                 if (savedApiKey) setApiKey(savedApiKey);
-                if (savedFileId) setSelectedFileId(savedFileId);
-                if (savedFileName) setSelectedFileName(savedFileName);
+                if (savedSpreadsheetId) setSpreadsheetId(savedSpreadsheetId);
             }, []);
 
             useEffect(() => {
@@ -498,100 +497,45 @@
                 script.defer = true;
                 document.body.appendChild(script);
 
-                const script2 = document.createElement('script');
-                script2.src = 'https://apis.google.com/js/api.js';
-                script2.async = true;
-                script2.defer = true;
-                script2.onload = () => {
-                    window.gapi.load('picker', () => {});
-                };
-                document.body.appendChild(script2);
-
                 return () => {
                     if (document.body.contains(script)) document.body.removeChild(script);
-                    if (document.body.contains(script2)) document.body.removeChild(script2);
                 };
             }, [clientId, apiKey]);
 
             const saveSettings = () => {
                 localStorage.setItem('googleClientId', clientId);
                 localStorage.setItem('googleApiKey', apiKey);
+                localStorage.setItem('spreadsheetId', spreadsheetId);
                 setShowSettings(false);
                 setError('');
             };
 
-            const handleGoogleSignIn = (response) => {
-                if (response.access_token) {
-                    setIsSignedIn(true);
-                    setError('');
-                    
-                    if (selectedFileId) {
-                        loadFileFromDrive(selectedFileId, response.access_token);
-                    }
-                }
-            };
-
-            const signIn = () => {
-                if (!clientId || !apiKey) {
-                    setError('Vänligen lägg till dina API-nycklar i inställningarna först');
+            const loadData = () => {
+                if (!clientId || !apiKey || !spreadsheetId) {
+                    setError('Vänligen lägg till API-nycklar och Spreadsheet ID i inställningarna');
                     setShowSettings(true);
                     return;
                 }
 
                 const client = window.google.accounts.oauth2.initTokenClient({
                     client_id: clientId,
-                    scope: 'https://www.googleapis.com/auth/drive.readonly',
-                    callback: handleGoogleSignIn,
-                });
-                client.requestAccessToken();
-            };
-
-            const signOut = () => {
-                setIsSignedIn(false);
-                setWorkoutData(null);
-            };
-
-            const openPicker = () => {
-                if (!clientId || !apiKey) {
-                    setError('API-nycklar saknas');
-                    return;
-                }
-
-                const client = window.google.accounts.oauth2.initTokenClient({
-                    client_id: clientId,
-                    scope: 'https://www.googleapis.com/auth/drive.readonly',
+                    scope: 'https://www.googleapis.com/auth/spreadsheets.readonly',
                     callback: (response) => {
                         if (response.access_token) {
-                            const picker = new window.google.picker.PickerBuilder()
-                                .addView(window.google.picker.ViewId.DOCS)
-                                .setOAuthToken(response.access_token)
-                                .setDeveloperKey(apiKey)
-                                .setCallback((data) => {
-                                    if (data.action === window.google.picker.Action.PICKED) {
-                                        const file = data.docs[0];
-                                        setSelectedFileId(file.id);
-                                        setSelectedFileName(file.name);
-                                        localStorage.setItem('selectedFileId', file.id);
-                                        localStorage.setItem('selectedFileName', file.name);
-                                        loadFileFromDrive(file.id, response.access_token);
-                                    }
-                                })
-                                .build();
-                            picker.setVisible(true);
+                            loadSpreadsheet(response.access_token);
                         }
                     },
                 });
                 client.requestAccessToken();
             };
 
-            const loadFileFromDrive = async (fileId, accessToken) => {
+            const loadSpreadsheet = async (accessToken) => {
                 setLoading(true);
                 setError('');
                 
                 try {
-                    // Get spreadsheet metadata to find all sheets
                     const metadataResponse = await fetch(
-                        `https://sheets.googleapis.com/v4/spreadsheets/${fileId}`,
+                        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`,
                         {
                             headers: {
                                 Authorization: `Bearer ${accessToken}`,
@@ -600,7 +544,7 @@
                     );
 
                     if (!metadataResponse.ok) {
-                        throw new Error('Kunde inte läsa Google Sheets-filen');
+                        throw new Error('Kunde inte läsa Google Sheets. Kontrollera att Spreadsheet ID är korrekt.');
                     }
 
                     const metadata = await metadataResponse.json();
@@ -608,13 +552,12 @@
                     
                     const data = {};
                     
-                    // Read data from each sheet
                     for (const sheet of sheets) {
                         const sheetName = sheet.properties.title;
-                        const range = `${sheetName}!A:Z`; // Read columns A to Z
+                        const range = `${sheetName}!A:Z`;
                         
                         const dataResponse = await fetch(
-                            `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values/${encodeURIComponent(range)}`,
+                            `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`,
                             {
                                 headers: {
                                     Authorization: `Bearer ${accessToken}`,
@@ -630,9 +573,8 @@
                         if (rows.length === 0) continue;
                         
                         const exercises = [];
-                        const headers = rows[0]; // First row is headers
+                        const headers = rows[0];
                         
-                        // Process data rows (skip header row)
                         for (let i = 1; i < rows.length; i++) {
                             const row = rows[i];
                             if (!row || row.length === 0 || !row[0]) continue;
@@ -649,7 +591,6 @@
                             }
                         }
                         
-                        // Map sheet name to day
                         const lowerSheetName = sheetName.toLowerCase().trim();
                         if (lowerSheetName.includes('varje dag') || lowerSheetName === 'daglig') {
                             data['daily'] = exercises;
@@ -666,24 +607,9 @@
                     setWorkoutData(data);
                     setLoading(false);
                 } catch (err) {
-                    setError('Kunde inte ladda filen: ' + err.message);
+                    setError('Kunde inte ladda data: ' + err.message);
                     setLoading(false);
                 }
-            };
-
-            const refreshFromDrive = () => {
-                if (!selectedFileId) return;
-                
-                const client = window.google.accounts.oauth2.initTokenClient({
-                    client_id: clientId,
-                    scope: 'https://www.googleapis.com/auth/drive.readonly',
-                    callback: (response) => {
-                        if (response.access_token) {
-                            loadFileFromDrive(selectedFileId, response.access_token);
-                        }
-                    },
-                });
-                client.requestAccessToken();
             };
 
             const handleLocalFileUpload = (e) => {
@@ -787,11 +713,11 @@
                     <div className="container">
                         <div className="max-w-2xl mx-auto">
                             <div className="card">
-                                <h2 className="text-4xl font-bold mb-6">Google Drive API-inställningar</h2>
+                                <h2 className="text-4xl font-bold mb-6">Inställningar</h2>
                                 
                                 <div className="space-y-4 mb-6">
                                     <div>
-                                        <label className="label">Client ID</label>
+                                        <label className="label">Google Client ID</label>
                                         <input
                                             type="text"
                                             value={clientId}
@@ -802,7 +728,7 @@
                                     </div>
                                     
                                     <div>
-                                        <label className="label">API Key</label>
+                                        <label className="label">Google API Key</label>
                                         <input
                                             type="text"
                                             value={apiKey}
@@ -811,16 +737,39 @@
                                             placeholder="Din Google API Key"
                                         />
                                     </div>
+
+                                    <div>
+                                        <label className="label">Spreadsheet ID</label>
+                                        <input
+                                            type="text"
+                                            value={spreadsheetId}
+                                            onChange={(e) => setSpreadsheetId(e.target.value)}
+                                            className="input"
+                                            placeholder="ID från Google Sheets URL"
+                                        />
+                                        <p className="text-sm text-gray mt-1">
+                                            Öppna din Google Sheet och kopiera ID från URL:en
+                                        </p>
+                                    </div>
                                 </div>
 
                                 <div className="info-box mb-6">
-                                    <h3 className="info-title">📝 Hur får jag API-nycklar?</h3>
+                                    <h3 className="info-title">📝 Hitta ditt Spreadsheet ID</h3>
+                                    <p className="text-sm text-gray mb-2">Öppna din Google Sheet. URL:en ser ut så här:</p>
+                                    <div className="code-box mb-2">
+                                        https://docs.google.com/spreadsheets/d/<strong>1ABC...xyz</strong>/edit
+                                    </div>
+                                    <p className="text-sm text-gray">Kopiera den långa strängen mellan /d/ och /edit</p>
+                                </div>
+
+                                <div className="info-box mb-6">
+                                    <h3 className="info-title">🔑 Google API Setup</h3>
                                     <ol className="info-list">
                                         <li>Gå till <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="info-link">Google Cloud Console</a></li>
                                         <li>Skapa ett nytt projekt</li>
-                                        <li>Aktivera "Google Drive API", "Google Picker API" och "Google Sheets API"</li>
+                                        <li>Aktivera "Google Sheets API"</li>
                                         <li>Skapa credentials (OAuth 2.0 Client ID och API Key)</li>
-                                        <li>Kopiera och klistra in här</li>
+                                        <li>Authorized JavaScript origins: <code>https://seraphicmusic.github.io</code></li>
                                     </ol>
                                 </div>
 
@@ -845,7 +794,7 @@
                             <div className="text-center mb-8">
                                 <Dumbbell size={48} className="text-blue mx-auto mb-4" />
                                 <h1 className="text-4xl font-bold mb-2">Träningsdashboard</h1>
-                                <p className="text-gray">Anslut till Google Drive eller ladda upp fil</p>
+                                <p className="text-gray">Ladda ditt träningsschema från Google Sheets eller lokal fil</p>
                             </div>
 
                             {error && (
@@ -859,33 +808,23 @@
                                     <span className="badge badge-blue">Rekommenderas</span> Google Sheets
                                 </h2>
                                 <p className="text-gray mb-4">
-                                    Anslut till Google Drive för automatisk synkning av ditt Google Sheets-träningsschema
+                                    Anslut direkt till ditt Google Sheets-dokument
                                 </p>
                                 
-                                {!isSignedIn ? (
-                                    <button
-                                        onClick={signIn}
-                                        disabled={loading}
-                                        className="btn btn-primary btn-full"
-                                    >
-                                        {loading ? 'Laddar...' : 'Anslut till Google Drive'}
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={openPicker}
-                                        disabled={loading}
-                                        className="btn btn-primary btn-full"
-                                    >
-                                        Välj fil från Drive
-                                    </button>
-                                )}
+                                <button
+                                    onClick={loadData}
+                                    disabled={loading}
+                                    className="btn btn-primary btn-full mb-2"
+                                >
+                                    {loading ? 'Laddar...' : 'Ladda från Google Sheets'}
+                                </button>
 
                                 <button
                                     onClick={() => setShowSettings(true)}
-                                    className="btn-full mt-2 text-center text-gray"
+                                    className="btn-full text-center text-gray"
                                     style={{textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer'}}
                                 >
-                                    API-inställningar
+                                    Inställningar (API-nycklar & Spreadsheet ID)
                                 </button>
                             </div>
 
@@ -924,22 +863,17 @@
                                 <Dumbbell size={32} className="text-blue" />
                                 <div>
                                     <h1>Träningsdashboard</h1>
-                                    {selectedFileName && (
-                                        <p className="file-name">📄 {selectedFileName}</p>
-                                    )}
                                 </div>
                             </div>
                             <div className="header-right">
-                                {selectedFileId && (
-                                    <button
-                                        onClick={refreshFromDrive}
-                                        disabled={loading}
-                                        className="btn-icon"
-                                        title="Uppdatera från Drive"
-                                    >
-                                        <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
-                                    </button>
-                                )}
+                                <button
+                                    onClick={loadData}
+                                    disabled={loading}
+                                    className="btn-icon"
+                                    title="Uppdatera från Google Sheets"
+                                >
+                                    <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+                                </button>
                                 <button
                                     onClick={() => setShowSettings(true)}
                                     className="btn-icon"
@@ -947,15 +881,6 @@
                                 >
                                     <Settings size={20} />
                                 </button>
-                                {isSignedIn && (
-                                    <button
-                                        onClick={signOut}
-                                        className="btn-icon"
-                                        title="Logga ut"
-                                    >
-                                        <LogOut size={20} />
-                                    </button>
-                                )}
                             </div>
                         </div>
                         
